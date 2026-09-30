@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: typecheck, build, tests, pack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: install
+        run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: build
+        run: npm run build
+
+      # Without REGISTRY_TARBALL the registry integration reports SKIPPED.
+      - name: tests
+        run: npm run test:run
+
+      - name: pack contents
+        run: npm pack --dry-run
+
+      - name: audit (runtime dependencies)
+        run: npm audit --omit=dev
+
+  registry-integration:
+    name: registry integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: install
+        run: npm ci
+
+      # Present only once plugin-registry is on npm; until then the test
+      # reports SKIPPED (not a pass).
+      - name: fetch plugin-registry tarball when published
+        run: |
+          if npm pack @hollis-labs/plugin-registry@0.1.0 --pack-destination "$RUNNER_TEMP" >/dev/null 2>&1; then
+            echo "REGISTRY_TARBALL=$RUNNER_TEMP/hollis-labs-plugin-registry-0.1.0.tgz" >> "$GITHUB_ENV"
+          else
+            echo "plugin-registry 0.1.0 not on npm yet; registry integration will be skipped"
+          fi
+
+      - name: registry integration
+        run: npm run test:run
